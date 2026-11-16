@@ -28,6 +28,8 @@ public static class BuildScript
         AssetDatabase.Refresh();
         AssetDatabase.SaveAssets();
 
+        EnsureAlwaysIncludedShaders();
+
         string[] scenes = EditorBuildSettings.scenes
             .Where(s => s.enabled)
             .Select(s => s.path)
@@ -61,5 +63,69 @@ public static class BuildScript
 
         if (Application.isBatchMode)
             EditorApplication.Exit(summary.result == BuildResult.Succeeded ? 0 : 1);
+    }
+
+    /// <summary>
+    /// 把运行时用 Shader.Find 加载的 shader 写进 GraphicsSettings 的 Always Included 列表。
+    /// 不做这一步，URP 会在打包时把没有被任何材质引用的粒子 shader 剥离掉，
+    /// 结果就是打包版里雪/雨粒子静默消失（编辑器里却完全正常）。
+    /// </summary>
+    static void EnsureAlwaysIncludedShaders()
+    {
+        string[] required =
+        {
+            "Universal Render Pipeline/Particles/Unlit"
+        };
+
+        UnityEngine.Object[] settings =
+            AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/GraphicsSettings.asset");
+
+        if (settings == null || settings.Length == 0)
+        {
+            Debug.LogWarning("[Build] 找不到 GraphicsSettings.asset，跳过 shader 常驻设置");
+            return;
+        }
+
+        SerializedObject so = new SerializedObject(settings[0]);
+        SerializedProperty list = so.FindProperty("m_AlwaysIncludedShaders");
+
+        if (list == null)
+        {
+            Debug.LogWarning("[Build] GraphicsSettings 里没有 m_AlwaysIncludedShaders 字段");
+            return;
+        }
+
+        foreach (string name in required)
+        {
+            Shader shader = Shader.Find(name);
+            if (shader == null)
+            {
+                Debug.LogWarning("[Build] 找不到 shader: " + name);
+                continue;
+            }
+
+            bool exists = false;
+            for (int i = 0; i < list.arraySize; i++)
+            {
+                if (list.GetArrayElementAtIndex(i).objectReferenceValue == shader)
+                {
+                    exists = true;
+                    break;
+                }
+            }
+
+            if (exists)
+            {
+                Debug.Log("[Build] shader 已在常驻列表: " + name);
+                continue;
+            }
+
+            list.InsertArrayElementAtIndex(list.arraySize);
+            list.GetArrayElementAtIndex(list.arraySize - 1).objectReferenceValue = shader;
+            Debug.Log("[Build] 加入常驻 shader 列表: " + name);
+        }
+
+        so.ApplyModifiedProperties();
+        AssetDatabase.SaveAssets();
     }
 }

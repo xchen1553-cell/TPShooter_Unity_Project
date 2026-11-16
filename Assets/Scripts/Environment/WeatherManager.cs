@@ -717,7 +717,12 @@ public class WeatherManager : MonoBehaviour
 
         Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
         if (shader == null) shader = Shader.Find("Sprites/Default");
-        if (shader == null) return null;
+        if (shader == null)
+        {
+            Debug.LogWarning("[Weather] 雪花粒子 shader 全部缺失，雪将在打包版本里不显示");
+            return null;
+        }
+        Debug.Log("[Weather] 雪花粒子 shader = " + shader.name);
 
         Material m = new Material(shader);
         m.name = "SnowParticle";
@@ -765,7 +770,12 @@ public class WeatherManager : MonoBehaviour
 
         Shader shader = Shader.Find("Universal Render Pipeline/Particles/Unlit");
         if (shader == null) shader = Shader.Find("Sprites/Default");
-        if (shader == null) return null;
+        if (shader == null)
+        {
+            Debug.LogWarning("[Weather] 雨丝粒子 shader 全部缺失，雨将在打包版本里不显示");
+            return null;
+        }
+        Debug.Log("[Weather] 雨丝粒子 shader = " + shader.name);
 
         Material m = new Material(shader);
         m.name = "RainParticle";

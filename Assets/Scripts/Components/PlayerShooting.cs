@@ -15,6 +15,16 @@ public class PlayerShooting : MonoBehaviour
     [Tooltip("子弹发射口（一般挂在枪口）")]
     public Transform firePoint;
 
+    [Header("Muzzle Flash 枪口闪光（教授第4条）")]
+    [Tooltip("勾选 = 每次开火在枪口打一次黄色闪光")]
+    public bool enableMuzzleFlash = true;
+    [Tooltip("闪光颜色")]
+    public Color muzzleFlashColor = new Color(1f, 0.85f, 0.3f);
+    [Tooltip("闪光点光源强度")]
+    public float muzzleFlashLightIntensity = 6f;
+    [Tooltip("闪光持续时间（秒）")]
+    public float muzzleFlashDuration = 0.09f;
+
     private float nextFireTime;
 
     void Update()
@@ -47,14 +57,25 @@ public class PlayerShooting : MonoBehaviour
             return;
         }
 
-        // 从池中取一颗子弹，放到枪口并设置朝向与速度
-        GameObject bullet = BulletPool.Instance.GetBullet();
-        bullet.transform.SetPositionAndRotation(firePoint.position, firePoint.rotation);
+        // 位置/朝向/速度一次性交给对象池：它在激活子弹之前就摆好，避免池化子弹带着上一次的
+        // 位置和残留速度被唤醒、对旧位置附近的敌人产生一次"莫名命中"
+        Vector3 muzzlePosition = firePoint.position;
+        Quaternion muzzleRotation = firePoint.rotation;
+        Vector3 velocity = firePoint.forward * bulletSpeed;
 
-        Rigidbody bulletRb = bullet.GetComponent<Rigidbody>();
-        if (bulletRb != null)
+        GameObject bullet = BulletPool.Instance.GetBullet(muzzlePosition, muzzleRotation, velocity);
+        if (bullet == null) return;
+
+        // 枪口离玩家身体很近，让子弹忽略玩家自身的碰撞体，避免刚出膛就打到自己
+        Collider myCollider = GetComponent<Collider>();
+        if (myCollider != null)
         {
-            bulletRb.linearVelocity = firePoint.forward * bulletSpeed;
+            foreach (Collider bulletCollider in bullet.GetComponentsInChildren<Collider>())
+                Physics.IgnoreCollision(bulletCollider, myCollider, true);
         }
+
+        // 教授第4条：开火黄色闪光
+        if (enableMuzzleFlash)
+            MuzzleFlash.Spawn(firePoint, muzzleFlashColor, muzzleFlashLightIntensity, muzzleFlashDuration);
     }
 }

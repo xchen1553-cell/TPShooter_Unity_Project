@@ -182,6 +182,7 @@ MonoBehaviour:
     serializedVersion: 2
     m_Bits: 8
   fallThreshold: -10
+  bodyMaterial: {fileID: 2100000, guid: 27f7e98f037f486eb25d44fc67919367, type: 2}
 --- !u!114 &1985815761342453231
 MonoBehaviour:
   m_ObjectHideFlags: 0

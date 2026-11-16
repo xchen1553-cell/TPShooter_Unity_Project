@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 /// <summary>
 /// 玩家 —— 继承 Character 基类
@@ -10,13 +11,39 @@ public class Player : Character
 {
     [Header("Movement")]
     public float speed = 5f;
+    [Tooltip("速度倍率，由天气系统写入（雪地会降低），1 = 正常")]
+    public float speedMultiplier = 1f;
+    [Tooltip("地面抓地力：1 = 立即响应（原手感），越小越滑（雨天湿滑地面），由天气系统写入")]
+    [Range(0.05f, 1f)] public float grip = 1f;
     public float jumpForce = 5f;
     public float groundCheckDistance = 0.2f;
     public LayerMask groundMask;
 
+    [Header("Auto Rotation 移动自动朝向（教授第5条）")]
+    [Tooltip("勾选 = 移动时人物自动转向前进方向（纯视觉，不影响移动方向）")]
+    public bool autoRotate = true;
+    [Tooltip("转向平滑速度；越大转得越快，8~15 比较自然")]
+    public float rotateSpeed = 12f;
+    [Tooltip("模型朝向修正角（度）：如果人物跑起来是侧着/背对着跑，改这里，±90 或 180")]
+    public float modelYawOffset = 0f;
+
     [Header("Fall")]
     [Tooltip("掉落到该 Y 值以下判定为掉落死亡")]
     public float fallThreshold = -10f;
+
+    [Header("Visual")]
+    [Tooltip("玩家本体颜色（基础区分色，绿色）；未绑定材质时用此颜色染副本")]
+    public Color bodyColor = new Color(0.2f, 0.8f, 0.2f);
+    [Tooltip("玩家固化材质（绿色）；绑定后优先使用，留空则按 bodyColor 运行时染色")]
+    public Material bodyMaterial;
+
+    [Header("Glow 发光")]
+    [Tooltip("开启自发光；配合场景 Bloom 产生辉光（教授要求的 glowing effect）")]
+    public bool enableGlow = true;
+    [Tooltip("自发光强度；大于 1 才会被 Bloom 拾取")]
+    public float glowIntensity = 2.2f;
+    [Tooltip("额外挂一盏同色点光源，让辉光洒到地面")]
+    public bool addGlowLight = true;
 
     [Header("References")]
     [Tooltip("主相机，用于相对相机方向移动；留空自动查找")]
@@ -67,6 +94,10 @@ public class Player : Character
             // 4) 未拖相机时自动查找主相机，保证开箱可用
             if (cameraTransform == null && Camera.main != null)
                 cameraTransform = Camera.main.transform;
+
+            // 5) 打开相机后处理：Bloom 需要它，否则自发光只有本体亮度、没有辉光
+            EnableCameraPostProcessing();
+
             RtLog.Write("Player", "Awake 完成 worldRot=" + transform.rotation.eulerAngles + " cameraTransform=" + (cameraTransform != null));
         }
         catch (System.Exception e)
@@ -134,6 +165,75 @@ public class Player : Character
             shooting.firePoint.localPosition = new Vector3(0f, 1f, 0.5f);
             shooting.firePoint.localRotation = Quaternion.identity;
         }
+
+        // 8) 给显示模型套用玩家区分色（实例化材质副本，不污染共享 FBX 材质）
+        ApplyBodyColor(modelGo);
+    }
+
+    /// <summary>给模型套用区分色与自发光：每个渲染器生成材质实例，绑定固化材质时以它为底，否则用 FBX 内嵌材质</summary>
+    void ApplyBodyColor(GameObject modelGo)
+    {
+        if (modelGo == null) return;
+
+        foreach (Renderer r in modelGo.GetComponentsInChildren<Renderer>())
+        {
+            Material src = bodyMaterial != null ? bodyMaterial : r.sharedMaterial;
+            if (src == null) continue;
+
+            // 实例化：运行时的颜色/发光改动不会写回 .mat 资源
+            Material inst = new Material(src);
+            inst.color = bodyColor;
+
+            if (enableGlow)
+            {
+                inst.EnableKeyword("_EMISSION");
+                inst.SetColor("_EmissionColor", bodyColor * glowIntensity);
+            }
+            else
+            {
+                inst.DisableKeyword("_EMISSION");
+                inst.SetColor("_EmissionColor", Color.black);
+            }
+
+            r.material = inst;
+        }
+
+        if (addGlowLight)
+            EnsureGlowLight();
+    }
+
+    /// <summary>
+    /// 在物理根下挂一盏同色点光源，让辉光也能照亮周围地面。
+    /// 注意挂在根上而不是 Model 子物体：Model 带 100 倍缩放，挂上去光源位置会被放大。
+    /// </summary>
+    void EnsureGlowLight()
+    {
+        if (transform.Find("GlowLight") != null) return;
+
+        GameObject go = new GameObject("GlowLight");
+        go.transform.SetParent(transform, false);
+        go.transform.localPosition = new Vector3(0f, 0.9f, 0f);
+
+        Light l = go.AddComponent<Light>();
+        l.type = LightType.Point;
+        l.color = bodyColor;
+        l.range = 4f;
+        l.intensity = 1.2f;
+        l.shadows = LightShadows.None;
+    }
+
+    /// <summary>
+    /// 确保主相机开启后处理：场景里 Level1 的相机该开关是关的，Level2 甚至没有
+    /// UniversalAdditionalCameraData 组件。这里在运行时统一补齐，保证 Bloom 生效。
+    /// </summary>
+    void EnableCameraPostProcessing()
+    {
+        Camera cam = cameraTransform != null ? cameraTransform.GetComponent<Camera>() : Camera.main;
+        if (cam == null) return;
+
+        UniversalAdditionalCameraData data = cam.GetUniversalAdditionalCameraData();
+        if (data != null)
+            data.renderPostProcessing = true;
     }
 
     void Update()
@@ -200,15 +300,36 @@ public class Player : Character
                 + " vel=" + rb.linearVelocity);
             traceFrame++;
         }
-        Move(moveDir * speed);
+        // 移动自动朝向：让根节点平滑转到前进方向。
+        // 刚体已 FreezeRotation，物理引擎不会与这里的直接赋角打架；胶囊是回转体，转向不影响碰撞。
+        if (autoRotate && moveDir.sqrMagnitude > 0.0001f)
+        {
+            Quaternion target = Quaternion.LookRotation(Quaternion.Euler(0f, modelYawOffset, 0f) * moveDir, Vector3.up);
+            // 指数平滑：与帧率无关，rotateSpeed 越大越跟手
+            float t = 1f - Mathf.Exp(-rotateSpeed * Time.fixedDeltaTime);
+            transform.rotation = Quaternion.Slerp(transform.rotation, target, t);
+        }
+
+        Move(moveDir * speed * Mathf.Max(0.05f, speedMultiplier));
     }
 
     /// <summary>实现基类抽象方法 —— 相对相机方向移动，保留竖直速度以支持重力/跳跃</summary>
     public override void Move(Vector3 direction)
     {
-        Vector3 moveVelocity = direction;
-        moveVelocity.y = rb.linearVelocity.y; // 只改水平，不干扰 Y 轴
-        rb.linearVelocity = moveVelocity;
+        // 水平方向按 grip 做"抓地力"混合：grip = 1 时等于直接赋值（原手感），
+        // grip 越小越滑，松开按键后还会顺着惯性滑一段（雨天湿滑地面的规则）
+        Vector3 targetHorizontal = new Vector3(direction.x, 0f, direction.z);
+
+        Vector3 velocity = rb.linearVelocity;
+        Vector3 currentHorizontal = new Vector3(velocity.x, 0f, velocity.z);
+
+        float g = Mathf.Clamp01(grip);
+        Vector3 blendedHorizontal = Vector3.Lerp(currentHorizontal, targetHorizontal, g);
+
+        velocity.x = blendedHorizontal.x;
+        velocity.z = blendedHorizontal.z;
+        // Y 轴保持原样，不干扰重力/跳跃
+        rb.linearVelocity = velocity;
     }
 
     /// <summary>实现基类抽象方法 —— 玩家死亡：接入 GameManager 的生命扣减与关卡重启</summary>

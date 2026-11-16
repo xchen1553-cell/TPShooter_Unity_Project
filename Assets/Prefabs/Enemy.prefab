@@ -112,3 +112,4 @@ MonoBehaviour:
   player: {fileID: 0}
   attackDamage: 10
   attackCooldown: 1
+  bodyMaterial: {fileID: 2100000, guid: ad7c94bac03f4b668ed2168362b2c8a9, type: 2}
